@@ -1,0 +1,39 @@
+{
+  "name": "neuromancy",
+  "version": "0.1.0",
+  "description": "Self-improving AI agent desktop app",
+  "main": "electron/main.js",
+  "scripts": {
+    "electron": "electron .",
+    "dev": "concurrently \"cd frontend && npm run dev\" \"python -m neuromancy.server.app\"",
+    "build:frontend": "cd frontend && npm run build",
+    "build:electron": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "concurrently": "^9.0.0"
+  },
+  "build": {
+    "appId": "com.neuromancy.app",
+    "productName": "Neuromancy",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/out/**/*",
+      "neuromancy/**/*.py",
+      "pyproject.toml"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}
