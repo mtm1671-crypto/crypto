@@ -21,6 +21,7 @@ class PluginManifest(BaseModel):
     version: str
     description: str
     tools: list[ToolSchema]
+    credentials_required: list[str] = Field(default_factory=list)
 
 
 class BasePlugin(ABC):
@@ -47,6 +48,40 @@ class BasePlugin(ABC):
             ValueError: If the tool_name is not recognized by this plugin.
         """
         ...
+
+
+class _PluginToolView(BasePlugin):
+    """Wraps an existing plugin while exposing only a subset of its tools.
+
+    Used by ``PluginRegistry.filtered()`` to produce a scoped view of a plugin
+    without mutating the original. The wrapped plugin's execution is delegated
+    transparently for allowed tools; invoking a filtered-out tool raises
+    KeyError to prevent caller-side caching from bypassing the restriction.
+    """
+
+    def __init__(self, wrapped: BasePlugin, tools: list[ToolSchema]):
+        self._wrapped = wrapped
+        self._tools = tools
+        self._allowed_tool_names = {t.name for t in tools}
+        self._manifest = PluginManifest(
+            name=wrapped.manifest.name,
+            version=wrapped.manifest.version,
+            description=wrapped.manifest.description,
+            tools=tools,
+            credentials_required=wrapped.manifest.credentials_required,
+        )
+
+    @property
+    def manifest(self) -> PluginManifest:
+        return self._manifest
+
+    async def execute(self, tool_name: str, arguments: dict) -> str:
+        if tool_name not in self._allowed_tool_names:
+            raise KeyError(
+                f"Tool '{tool_name}' is not permitted in the restricted view "
+                f"of plugin '{self._wrapped.manifest.name}'"
+            )
+        return await self._wrapped.execute(tool_name, arguments)
 
 
 class PluginRegistry:
@@ -120,3 +155,32 @@ class PluginRegistry:
         """
         _, tool = self.find_plugin_for_tool(tool_name)
         return tool.requires_approval
+
+    def filtered(self, allowlist: set[str] | None) -> "PluginRegistry":
+        """Return a new registry exposing only tools in the allowlist.
+
+        This is the scoping primitive used by skills and (future) cron jobs to
+        restrict what an LLM or procedure can invoke. Plugins whose every tool
+        is excluded are not registered in the resulting view; plugins with a
+        partial overlap are wrapped in ``_PluginToolView``.
+
+        Args:
+            allowlist: The set of tool names permitted in the resulting
+                registry. ``None`` means no restriction — the new registry
+                contains every plugin from the source. An empty set means
+                nothing is permitted; the new registry has no tools.
+
+        Returns:
+            A fresh ``PluginRegistry`` populated with the scoped plugins. The
+            original registry is never mutated.
+        """
+        new = PluginRegistry()
+        for plugin in self._plugins.values():
+            if allowlist is None:
+                new.register(plugin)
+                continue
+            allowed_tools = [t for t in plugin.manifest.tools if t.name in allowlist]
+            if not allowed_tools:
+                continue
+            new.register(_PluginToolView(plugin, allowed_tools))
+        return new
