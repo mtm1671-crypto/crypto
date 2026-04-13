@@ -57,12 +57,16 @@ class FakeLLM:
         self._reflection_response = reflection_response or {
             "choices": [{"message": {"content": "[]"}}]
         }
+        self.last_usage: dict | None = None
+        self.model: str = "anthropic/claude-haiku-4"
 
     async def stream_complete(self, messages, tools=None):
+        self.last_usage = None
         for chunk in self._chunks:
             yield chunk
 
     async def complete(self, messages, tools=None):
+        self.last_usage = None
         return self._reflection_response
 
 
@@ -91,6 +95,27 @@ async def collect_events(loop: QueryLoop, session: Session, msg: str) -> list[St
     async for event in loop.run(session, msg):
         events.append(event)
     return events
+
+
+def _message_text(message: dict) -> str:
+    """Extract the full text of a message regardless of content shape.
+
+    After prompt caching was added, system messages may carry a list of
+    cache-controlled content blocks instead of a plain string. Tests that
+    assert on the text should work against either form.
+    """
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                parts.append(block.get("text", ""))
+            elif isinstance(block, str):
+                parts.append(block)
+        return "".join(parts)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -126,8 +151,9 @@ class TestMemoryInjection:
 
         # The first message should be a system message with memories
         assert captured_messages[0]["role"] == "system"
-        assert "sudo" in captured_messages[0]["content"]
-        assert "learned" in captured_messages[0]["content"].lower()
+        system_text = _message_text(captured_messages[0])
+        assert "sudo" in system_text
+        assert "learned" in system_text.lower()
 
     @pytest.mark.asyncio
     async def test_no_injection_when_no_relevant_memories(self, store: MemoryStore):
@@ -292,6 +318,7 @@ class TestReflection:
         session = make_session()
 
         await collect_events(loop, session, "help me with this task")
+        await asyncio.sleep(0.1)  # let fire-and-forget reflection task complete
 
         memories = store.get_all()
         assert len(memories) == 1
@@ -347,6 +374,7 @@ class TestReflection:
         session = make_session()
 
         await collect_events(loop, session, "use Python please")
+        await asyncio.sleep(0.1)  # let fire-and-forget reflection task complete
 
         memories = store.get_all()
         assert len(memories) == 1
@@ -398,6 +426,7 @@ class TestReflection:
         session = make_session()
 
         await collect_events(loop, session, "help me plan")
+        await asyncio.sleep(0.1)  # let fire-and-forget reflection task complete
 
         # Should reinforce, not duplicate
         memories = store.get_all()
@@ -427,6 +456,7 @@ class TestReflection:
         session = make_session()
 
         await collect_events(loop, session, "big task")
+        await asyncio.sleep(0.1)  # let fire-and-forget reflection task complete
 
         assert len(store.get_all()) <= 2
 

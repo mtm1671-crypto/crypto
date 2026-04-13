@@ -228,10 +228,8 @@ class TestMemoryStorePersistence:
         store.add(MemoryEntry(category=MemoryCategory.strategy, content="deep"))
         assert deep_path.exists()
 
-    def test_file_is_valid_json(self, tmp_memory_path: Path):
-        store = MemoryStore(tmp_memory_path)
-        store.add(MemoryEntry(category=MemoryCategory.strategy, content="check json"))
-        data = json.loads(tmp_memory_path.read_text(encoding="utf-8"))
-        assert isinstance(data, list)
-        assert len(data) == 1
-        assert data[0]["content"] == "check json"
+    # Note: the previous `test_file_is_valid_json` was removed. It asserted
+    # that the on-disk format was JSON, which coupled the test to an
+    # implementation detail of the old JSON-backed store. The current store
+    # uses SQLite; public-API tests in test_memory_sqlite.py cover every
+    # persistence property that test was trying to establish.
